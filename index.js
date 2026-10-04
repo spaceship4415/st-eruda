@@ -15,8 +15,9 @@ const TEXT = ko
         exportTab: '내보내기',
         exportIntro: '이 확장을 켠 뒤로 쌓인 기록입니다. 새로고침하면 지워집니다.',
         count: (picked, total) => `내보낼 줄 ${picked}개 / 전체 ${total}개`,
-        scope: '범위', scopeProblems: '에러·경고만', scopeAll: '전체', copy: '복사', saveFile: '파일로 저장 (.txt)',
-        useFilter: '콘솔 필터도 적용', filterNow: desc => `지금 콘솔 필터: ${desc}`, filterNone: '없음',
+        scope: '무엇을 내보낼까요?', scopeProblems: '에러·경고만', scopeAll: '전체', scopeConsole: '콘솔에 보이는 그대로',
+        copy: '복사', saveFile: '파일로 저장 (.txt)',
+        filterNow: desc => `지금 콘솔 필터: ${desc}`, filterNone: '없음 (전체와 같음)',
         copied: '복사했습니다 ✓', copyFailed: '복사 실패 — 파일로 저장해 보세요', empty: '내보낼 기록이 없습니다',
         positions: { 'top-left': '왼쪽 위', 'top-right': '오른쪽 위', 'middle-left': '왼쪽 가운데', 'middle-right': '오른쪽 가운데', 'bottom-left': '왼쪽 아래', 'bottom-right': '오른쪽 아래' },
     }
@@ -27,8 +28,9 @@ const TEXT = ko
         exportTab: 'Export',
         exportIntro: 'Everything recorded since this extension was enabled. Reloading clears it.',
         count: (picked, total) => `${picked} lines to export / ${total} total`,
-        scope: 'Range', scopeProblems: 'Errors & warnings', scopeAll: 'Everything', copy: 'Copy', saveFile: 'Save as file (.txt)',
-        useFilter: 'Also apply the console filter', filterNow: desc => `Console filter now: ${desc}`, filterNone: 'none',
+        scope: 'What to export?', scopeProblems: 'Errors & warnings', scopeAll: 'Everything', scopeConsole: 'What the console shows',
+        copy: 'Copy', saveFile: 'Save as file (.txt)',
+        filterNow: desc => `Console filter now: ${desc}`, filterNone: 'none (same as Everything)',
         copied: 'Copied ✓', copyFailed: 'Copy failed — try saving as a file', empty: 'Nothing to export',
         positions: { 'top-left': 'Top left', 'top-right': 'Top right', 'middle-left': 'Middle left', 'middle-right': 'Middle right', 'bottom-left': 'Bottom left', 'bottom-right': 'Bottom right' },
     };
@@ -119,13 +121,21 @@ function describeConsoleFilter(filter) {
     return parts.join(' · ');
 }
 
-// 범위(에러·경고만 / 전체)와, 켜 두었으면 콘솔 필터까지 맞는 줄만 고른다
+const SCOPES = ['problems', 'all', 'console'];
+
+function getScope() {
+    const scope = extension_settings[MODULE_NAME].exportScope;
+    return SCOPES.includes(scope) ? scope : 'problems';
+}
+
+// 고른 것 하나(에러·경고만 / 전체 / 콘솔에 보이는 그대로)에 맞는 줄만 고른다
 function pickLogs() {
-    const settings = extension_settings[MODULE_NAME];
+    const scope = getScope();
+    if (scope === 'all') return { scope, picked: logs, note: 'everything' };
+    if (scope === 'problems') return { scope, picked: logs.filter(isProblem), note: 'errors & warnings' };
     const filter = getConsoleFilter();
-    const useFilter = settings.exportUseConsoleFilter !== false && filter.active;
-    const picked = logs.filter(entry => (settings.exportScope === 'all' || isProblem(entry)) && (!useFilter || matchesConsoleFilter(entry, filter)));
-    return { picked, onlyProblems: settings.exportScope !== 'all', filterNote: useFilter ? describeConsoleFilter(filter) : '' };
+    const picked = filter.active ? logs.filter(entry => matchesConsoleFilter(entry, filter)) : logs;
+    return { scope, picked, note: `what the console shows (filter: ${filter.active ? describeConsoleFilter(filter) : 'none'})` };
 }
 
 function pad(number, size = 2) {
@@ -145,20 +155,20 @@ function maskAddress(text) {
 }
 
 function buildReport() {
-    const { picked, onlyProblems, filterNote } = pickLogs();
+    const { scope, picked, note } = pickLogs();
     // 받는 사람이 무엇을 거른 기록인지 알 수 있게 적어 둔다
     const header = [
         `SillyTavern console export - ${new Date().toLocaleString()}`,
         `User agent: ${navigator.userAgent}`,
         `Screen: ${window.innerWidth}x${window.innerHeight}`,
-        `Range: ${onlyProblems ? 'errors & warnings' : 'everything'}${filterNote ? `, console filter: ${filterNote}` : ''}`,
+        `Exported: ${note}`,
         '',
     ];
     const lines = picked.map(({ time, level, text }) => {
         const stamp = `${pad(time.getHours())}:${pad(time.getMinutes())}:${pad(time.getSeconds())}.${pad(time.getMilliseconds(), 3)}`;
         return `[${stamp}] [${level.toUpperCase()}] ${text}`;
     });
-    return { text: maskAddress(header.concat(lines).join('\n')), count: picked.length, onlyProblems };
+    return { text: maskAddress(header.concat(lines).join('\n')), count: picked.length, scope };
 }
 
 // 버튼 글자를 잠깐 바꿔서 알려 준다. 콘솔 창이 화면을 덮고 있어 토스트는 가려질 수 있어서
@@ -195,24 +205,27 @@ async function copyReport(button) {
 }
 
 function saveReport(button) {
-    const { text, count, onlyProblems } = buildReport();
+    const { text, count, scope } = buildReport();
     if (!count) return flash(button, TEXT.empty);
     const now = new Date();
     const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-    download(text, `st-console-${onlyProblems ? 'errors-' : ''}${stamp}.txt`, 'text/plain');
+    const kind = { problems: 'errors-', console: 'filtered-', all: '' }[scope];
+    download(text, `st-console-${kind}${stamp}.txt`, 'text/plain');
 }
 
 // Eruda 안에 '내보내기' 탭을 단다. 에러를 본 그 자리에서 바로 내보낼 수 있게.
-// 범위(에러·경고만 / 전체)를 먼저 고르고 복사·저장은 그 범위를 따른다. 고른 범위는 기억해 둔다
+// 에러·경고만 / 전체 / 콘솔에 보이는 그대로 중 하나를 고르고, 복사·저장은 그것을 따른다. 고른 것은 기억해 둔다.
+// 둘을 겹쳐 거르면 서로 부딪혀 0줄이 될 수 있어서 하나만 고르게 했다
 function exportTool() {
     let root = null;
     const buttonStyle = 'display:block;width:100%;min-height:48px;margin:0 0 10px;padding:10px 12px;font-size:16px;border:1px solid #ccc;border-radius:8px;background:#f5f5f5;color:#333;';
-    const choiceStyle = 'position:relative;flex:1;display:flex;align-items:center;justify-content:center;gap:6px;min-height:44px;padding:8px;font-size:15px;cursor:pointer;';
-    const onlyProblems = () => extension_settings[MODULE_NAME].exportScope !== 'all';
+    const choiceStyle = 'position:relative;display:block;min-height:44px;padding:11px 14px;font-size:15px;cursor:pointer;';
+    const hiddenRadio = 'position:absolute;opacity:0;width:0;height:0;margin:0;';
     // 내보낼 줄 수와 지금 콘솔 필터를 다시 적는다. 콘솔 탭에서 필터를 바꾸고 넘어올 수 있어서 탭을 열 때마다 부른다
     const refresh = () => {
         root.querySelector('[data-role="count"]').textContent = TEXT.count(pickLogs().picked.length, logs.length);
-        root.querySelector('[data-role="filter-now"]').textContent = TEXT.filterNow(describeConsoleFilter(getConsoleFilter()));
+        const filter = getConsoleFilter();
+        root.querySelector('[data-role="filter-now"]').textContent = TEXT.filterNow(filter.active ? describeConsoleFilter(filter) : TEXT.filterNone);
     };
     // 고른 쪽을 칠하고 ✓ 를 붙인다. 동그라미는 파란 바탕에서 잘 안 보여서 숨겨 두었다
     const paintChoices = () => {
@@ -220,8 +233,10 @@ function exportTool() {
             const label = input.parentElement;
             label.style.background = input.checked ? '#2196f3' : '#f5f5f5';
             label.style.color = input.checked ? '#fff' : '#333';
-            label.style.fontWeight = input.checked ? 'bold' : 'normal';
-            input.nextElementSibling.textContent = `${input.checked ? '✓ ' : ''}${input.dataset.label}`;
+            label.querySelector('[data-role="choice-title"]').style.fontWeight = input.checked ? 'bold' : 'normal';
+            label.querySelector('[data-role="choice-title"]').textContent = `${input.checked ? '✓ ' : ''}${input.dataset.label}`;
+            const note = label.querySelector('[data-role="filter-now"]');
+            if (note) note.style.color = input.checked ? '#e3f2fd' : '#666';
         }
     };
     return {
@@ -233,24 +248,21 @@ function exportTool() {
                 <p data-role="intro" style="margin:0 0 6px;font-size:14px;line-height:1.5;"></p>
                 <p data-role="count" style="margin:0 0 16px;font-size:14px;font-weight:bold;"></p>
                 <p data-role="scope" style="margin:0 0 6px;font-size:14px;"></p>
-                <div role="radiogroup" style="display:flex;margin:0 0 16px;border:1px solid #ccc;border-radius:8px;overflow:hidden;">
-                    <label style="${choiceStyle}border-right:1px solid #ccc;"><input type="radio" name="scope" value="problems" style="position:absolute;opacity:0;width:0;height:0;margin:0;"><span></span></label>
-                    <label style="${choiceStyle}"><input type="radio" name="scope" value="all" style="position:absolute;opacity:0;width:0;height:0;margin:0;"><span></span></label>
+                <div role="radiogroup" style="margin:0 0 16px;border:1px solid #ccc;border-radius:8px;overflow:hidden;">
+                    <label style="${choiceStyle}border-bottom:1px solid #ccc;"><input type="radio" name="scope" value="problems" style="${hiddenRadio}"><span data-role="choice-title"></span></label>
+                    <label style="${choiceStyle}border-bottom:1px solid #ccc;"><input type="radio" name="scope" value="all" style="${hiddenRadio}"><span data-role="choice-title"></span></label>
+                    <label style="${choiceStyle}"><input type="radio" name="scope" value="console" style="${hiddenRadio}"><span data-role="choice-title"></span>
+                        <span data-role="filter-now" style="display:block;margin-top:3px;font-size:13px;"></span></label>
                 </div>
-                <label style="display:flex;align-items:center;gap:10px;min-height:44px;margin:0;font-size:15px;cursor:pointer;">
-                    <input type="checkbox" data-role="use-filter" style="width:22px;height:22px;margin:0;flex:none;">
-                    <span data-role="use-filter-label"></span>
-                </label>
-                <p data-role="filter-now" style="margin:0 0 16px 32px;font-size:13px;color:#666;"></p>
                 <button type="button" data-action="copy" style="${buttonStyle}"></button>
                 <button type="button" data-action="save" style="${buttonStyle}"></button>
             `;
             root.querySelector('[data-role="intro"]').textContent = TEXT.exportIntro;
             root.querySelector('[data-role="scope"]').textContent = TEXT.scope;
-            const scopeLabels = { problems: TEXT.scopeProblems, all: TEXT.scopeAll };
+            const scopeLabels = { problems: TEXT.scopeProblems, all: TEXT.scopeAll, console: TEXT.scopeConsole };
             for (const input of root.querySelectorAll('input[name="scope"]')) {
                 input.dataset.label = scopeLabels[input.value];
-                input.checked = input.value === (onlyProblems() ? 'problems' : 'all');
+                input.checked = input.value === getScope();
                 input.addEventListener('change', () => {
                     extension_settings[MODULE_NAME].exportScope = input.value;
                     saveSettingsDebounced();
@@ -259,14 +271,6 @@ function exportTool() {
                 });
             }
             paintChoices();
-            root.querySelector('[data-role="use-filter-label"]').textContent = TEXT.useFilter;
-            const useFilter = root.querySelector('[data-role="use-filter"]');
-            useFilter.checked = extension_settings[MODULE_NAME].exportUseConsoleFilter !== false;
-            useFilter.addEventListener('change', () => {
-                extension_settings[MODULE_NAME].exportUseConsoleFilter = useFilter.checked;
-                saveSettingsDebounced();
-                refresh();
-            });
             const labels = { copy: TEXT.copy, save: TEXT.saveFile };
             for (const button of root.querySelectorAll('button')) {
                 button.textContent = button.dataset.label = labels[button.dataset.action];
@@ -376,6 +380,8 @@ jQuery(() => {
     extension_settings[MODULE_NAME] ??= { enabled: false };
     const settings = extension_settings[MODULE_NAME];
     settings.position ??= DEFAULT_POSITION;
+    // 예전 '콘솔 필터도 적용' 체크박스 값. 지금은 '콘솔에 보이는 그대로' 선택지로 바뀌어 쓰지 않는다
+    delete settings.exportUseConsoleFilter;
 
     const drawer = $(`
         <div id="st_eruda_container" class="extension_container">
