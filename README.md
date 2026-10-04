@@ -54,3 +54,7 @@ SillyTavern.getContext().extensionSettings.st_eruda
 
 - Phone keyboards often turn `"` into curly quotes (`“ ”`), which breaks code. Turn off **smart punctuation / smart quotes** in your keyboard settings.
 - For longer code, copy it from somewhere else and paste it.
+
+## Credits
+
+[Eruda](https://github.com/liriliri/eruda) by liriliri, MIT License. It is not bundled here; the browser loads it from jsDelivr when the console is enabled.

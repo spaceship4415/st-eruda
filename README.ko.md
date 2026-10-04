@@ -85,3 +85,7 @@ SillyTavern.getContext().extensionSettings.st_eruda
 - 휴대폰 키보드는 따옴표 `"`를 `“ ”` 같은 둥근 따옴표로 바꾸는 경우가 있습니다. 이러면 코드에 오류가 납니다.
   키보드 설정에서 **스마트 구두점(스마트 따옴표) 끄기**를 해 두면 편합니다.
 - 긴 코드는 다른 곳(메모장, 채팅 등)에서 복사해서 붙여넣는 게 편합니다.
+
+## 출처
+
+[Eruda](https://github.com/liriliri/eruda) (만든 이: liriliri, MIT 라이선스). 이 확장에 Eruda 코드를 넣지 않았고, 콘솔을 켤 때 브라우저가 jsDelivr에서 직접 받아옵니다.
