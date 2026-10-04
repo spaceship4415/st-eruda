@@ -269,6 +269,11 @@ async function enable() {
         // 휴대폰 폭에서 '내보내기' 탭이 옆으로 밀지 않아도 보이도록 잘 안 쓰는 탭(Sources·Info·Snippets)은 뺀다
         eruda.init({ container: createHost(), tool: ['console', 'elements', 'network', 'resources'] });
         eruda.add(exportTool());
+        // 콘솔 창이 열리고 닫힐 때마다 버튼 자리를 다시 잡는다.
+        // 버튼을 눌러 열면 Eruda 가 창을 연 직후에 버튼을 끌던 자리로 되돌려 놓아서 한 박자 늦게 옮긴다
+        const replace = () => setTimeout(placeButton);
+        eruda._devTools?.on('show', replace);
+        eruda._devTools?.on('hide', replace);
         placeButton();
     } catch (error) {
         console.error(`[${MODULE_NAME}]`, error);
@@ -282,6 +287,16 @@ function placeButton() {
     const width = window.innerWidth;
     const height = window.innerHeight;
     const x = col === 'left' ? EDGE_GAP : width - BUTTON_SIZE - EDGE_GAP;
+
+    // 콘솔 창이 열려 있으면 버튼이 창 안의 버튼·로그를 가리지 않게 창 바로 위로 비켜 둔다.
+    // 창을 화면 가득 키워 위에 자리가 없으면 맨 위(탭 줄 오른쪽 끝)에 둔다
+    const panel = document.querySelector(`#${HOST_ID} #eruda`)?.shadowRoot?.querySelector('.eruda-dev-tools');
+    if (window.eruda._devTools?._isShow && panel) {
+        const panelTop = panel.getBoundingClientRect().top;
+        window.eruda.position({ x, y: Math.max(0, Math.round(panelTop - BUTTON_SIZE - EDGE_GAP)) });
+        return;
+    }
+
     const y = row === 'top' ? TOP_GAP
         : row === 'bottom' ? height - BUTTON_SIZE - BOTTOM_GAP
             : Math.round((height - BUTTON_SIZE) / 2);
@@ -348,8 +363,9 @@ jQuery(() => {
 
     $('#extensions_settings').append(drawer);
 
-    // 화면을 돌리거나 창 크기가 바뀌면 고른 자리로 다시 옮긴다
-    $(window).on('resize', placeButton);
+    // 화면을 돌리거나 키보드가 올라와 창 크기가 바뀌면 고른 자리로 다시 옮긴다.
+    // Eruda 도 크기가 바뀌면 버튼을 제 기본 자리(오른쪽 아래)로 돌려놓아서 그 뒤에 옮긴다
+    $(window).on('resize', () => setTimeout(placeButton));
 
     if (settings.enabled) enable();
 });
