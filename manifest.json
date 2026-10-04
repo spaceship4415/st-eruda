@@ -1,0 +1,10 @@
+{
+    "display_name": "Eruda Mobile Console",
+    "loading_order": 1,
+    "js": "index.js",
+    "requires": [],
+    "optional": [],
+    "author": "spaceship4415",
+    "version": "1.0.0",
+    "license": "MIT"
+}
