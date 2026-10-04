@@ -1,6 +1,7 @@
 import { saveSettingsDebounced } from '../../../../script.js';
 import { extension_settings } from '../../../extensions.js';
 import { getCurrentLocale } from '../../../i18n.js';
+import { power_user } from '../../../power-user.js';
 import { copyText, download } from '../../../utils.js';
 
 const MODULE_NAME = 'st_eruda';
@@ -18,6 +19,7 @@ const TEXT = ko
         scope: '무엇을 내보낼까요?', scopeProblems: '에러·경고만', scopeAll: '전체', scopeConsole: '콘솔에 보이는 그대로',
         copy: '복사', saveFile: '파일로 저장 (.txt)',
         filterNow: desc => `지금 콘솔 필터: ${desc}`, filterNone: '없음 (전체와 같음)',
+        promptWarning: '⚠ ST 설정의 "콘솔에 프롬프트 기록"이 켜져 있어 채팅 내용과 캐릭터 설정이 함께 들어갈 수 있습니다. 공유하기 전에 확인하세요.',
         copied: '복사했습니다 ✓', copyFailed: '복사 실패 — 파일로 저장해 보세요', empty: '내보낼 기록이 없습니다',
         positions: { 'top-left': '왼쪽 위', 'top-right': '오른쪽 위', 'middle-left': '왼쪽 가운데', 'middle-right': '오른쪽 가운데', 'bottom-left': '왼쪽 아래', 'bottom-right': '오른쪽 아래' },
     }
@@ -31,6 +33,7 @@ const TEXT = ko
         scope: 'What to export?', scopeProblems: 'Errors & warnings', scopeAll: 'Everything', scopeConsole: 'What the console shows',
         copy: 'Copy', saveFile: 'Save as file (.txt)',
         filterNow: desc => `Console filter now: ${desc}`, filterNone: 'none (same as Everything)',
+        promptWarning: '⚠ "Log prompts to console" is on in SillyTavern\'s settings, so chat text and character details may be included. Check before sharing.',
         copied: 'Copied ✓', copyFailed: 'Copy failed — try saving as a file', empty: 'Nothing to export',
         positions: { 'top-left': 'Top left', 'top-right': 'Top right', 'middle-left': 'Middle left', 'middle-right': 'Middle right', 'bottom-left': 'Bottom left', 'bottom-right': 'Bottom right' },
     };
@@ -156,6 +159,41 @@ function maskAddress(text) {
     return text;
 }
 
+// 로그에 찍힌 다른 서버의 IP 도 가린다. 127.0.0.1·0.0.0.0 은 누구나 같은 값이라 남겨 둔다.
+// 'Chrome/154.0.0.0' 같은 버전 번호는 앞에 '/' 나 글자가 붙어 있어서 건너뛴다
+function maskIps(text) {
+    return text
+        .replace(/(?<![\w.])(?<!\w\/)(?:\d{1,3}\.){3}\d{1,3}(?![\w.])/g, ip => {
+            const valid = ip.split('.').every(part => Number(part) <= 255);
+            return !valid || ip === '127.0.0.1' || ip === '0.0.0.0' ? ip : '<ip>';
+        })
+        .replace(/\[[0-9a-f]*:[0-9a-f:]*:[0-9a-f]*\]/gi, ip => (ip === '[::1]' ? ip : '[<ip>]'));
+}
+
+// API 키·토큰·비밀번호처럼 생긴 값을 가린다. 키 이름만 남겨서 무엇이 있었는지는 알 수 있게 한다
+const SECRET_PATTERNS = [
+    // Authorization: Bearer xxx
+    [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, '$1 <secret>'],
+    // OpenAI·Anthropic·OpenRouter 등 sk-xxx, 그 밖에 흔한 접두사가 붙은 키
+    [/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}/g, '<secret>'],
+    [/\bAIza[0-9A-Za-z_-]{30,}/g, '<secret>'],
+    [/\b(?:ghp|gho|ghu|ghs|github_pat|hf|glpat)_[A-Za-z0-9_]{16,}/g, '<secret>'],
+    [/\bxox[abprs]-[A-Za-z0-9-]{10,}/g, '<secret>'],
+    // JWT
+    [/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}/g, '<secret>'],
+    // 주소 뒤의 ?key=xxx&token=xxx
+    [/([?&](?:key|api[_-]?key|apikey|token|access[_-]?token|auth|secret|password|pass|signature|sig)=)[^&\s"'#]+/gi, '$1<secret>'],
+    // "api_key": "xxx", password=xxx, x-api-key: xxx (값이 짧으면 null·true 같은 것이라 건너뛴다)
+    [/(\b(?:api[_-]?key|apikey|x-api-key|secret|client[_-]?secret|token|access[_-]?token|refresh[_-]?token|password|passwd|authorization|cookie|csrf[_-]?token|x-csrf-token)["']?\s*[:=]\s*["']?)(?!<|Bearer\b|Basic\b)[^"'\s,}&]{6,}/gi, '$1<secret>'],
+];
+
+function maskSecrets(text) {
+    for (const [pattern, replacement] of SECRET_PATTERNS) {
+        text = text.replace(pattern, replacement);
+    }
+    return text;
+}
+
 function buildReport() {
     const { scope, picked, note } = pickLogs();
     // 받는 사람이 무엇을 거른 기록인지 알 수 있게 적어 둔다
@@ -170,7 +208,8 @@ function buildReport() {
         const stamp = `${pad(time.getHours())}:${pad(time.getMinutes())}:${pad(time.getSeconds())}.${pad(time.getMilliseconds(), 3)}`;
         return `[${stamp}] [${level.toUpperCase()}] ${text}`;
     });
-    return { text: maskAddress(header.concat(lines).join('\n')), count: picked.length, scope };
+    const text = maskSecrets(maskIps(maskAddress(header.concat(lines).join('\n'))));
+    return { text, count: picked.length, scope };
 }
 
 // 버튼 글자를 잠깐 바꿔서 알려 준다. 콘솔 창이 화면을 덮고 있어 토스트는 가려질 수 있어서
@@ -228,6 +267,9 @@ function exportTool() {
         root.querySelector('[data-role="count"]').textContent = TEXT.count(pickLogs().picked.length, logs.length);
         const filter = getConsoleFilter();
         root.querySelector('[data-role="filter-now"]').textContent = TEXT.filterNow(filter.active ? describeConsoleFilter(filter) : TEXT.filterNone);
+        // 프롬프트 기록이 켜져 있으면 일반 로그에 채팅 내용이 통째로 찍힌다. 에러·경고만 고르면 그 로그는 빠지므로 그때는 숨긴다
+        const warn = power_user.console_log_prompts && getScope() !== 'problems';
+        root.querySelector('[data-role="prompt-warning"]').style.display = warn ? 'block' : 'none';
     };
     // 고른 쪽을 칠하고 ✓ 를 붙인다. 동그라미는 파란 바탕에서 잘 안 보여서 숨겨 두었다
     const paintChoices = () => {
@@ -256,11 +298,13 @@ function exportTool() {
                     <label style="${choiceStyle}"><input type="radio" name="scope" value="console" style="${hiddenRadio}"><span data-role="choice-title"></span>
                         <span data-role="filter-now" style="display:block;margin-top:3px;font-size:13px;"></span></label>
                 </div>
+                <p data-role="prompt-warning" style="display:none;margin:0 0 16px;padding:10px 12px;font-size:14px;line-height:1.5;border:1px solid #f0c36d;border-radius:8px;background:#fff8e1;color:#5d4200;"></p>
                 <button type="button" data-action="copy" style="${buttonStyle}"></button>
                 <button type="button" data-action="save" style="${buttonStyle}"></button>
             `;
             root.querySelector('[data-role="intro"]').textContent = TEXT.exportIntro;
             root.querySelector('[data-role="scope"]').textContent = TEXT.scope;
+            root.querySelector('[data-role="prompt-warning"]').textContent = TEXT.promptWarning;
             const scopeLabels = { problems: TEXT.scopeProblems, all: TEXT.scopeAll, console: TEXT.scopeConsole };
             for (const input of root.querySelectorAll('input[name="scope"]')) {
                 input.dataset.label = scopeLabels[input.value];

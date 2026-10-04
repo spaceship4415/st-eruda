@@ -34,7 +34,13 @@ Eruda's console copies one log at a time, so this extension adds an **Export** t
 
 Each line has a timestamp, a level and the message; errors include their stack trace. The top lists the browser, screen size, and what was exported (with the console filter, if used).
 
-The address you reach SillyTavern at (IP or domain and port) is masked: `http://192.168.0.5:8000/scripts/a.js` becomes `<ST>/scripts/a.js`, and the host on its own becomes `<host>`. Anything else printed to the log — chat text, API keys, other servers' addresses — is kept as is, so skim it before sharing.
+To make the export safer to share, these are masked automatically:
+
+- The address you reach SillyTavern at: `http://192.168.0.5:8000/scripts/a.js` → `<ST>/scripts/a.js` (the host alone → `<host>`).
+- Other IP addresses: `http://192.168.0.10:5000` → `http://<ip>:5000`, IPv6 `[fe80::1]` → `[<ip>]`. `127.0.0.1`, `0.0.0.0` and version numbers like `Chrome/154.0.0.0` are left alone.
+- API keys and tokens: `sk-…`, `AIza…`, `ghp_…`, `hf_…`, JWTs → `<secret>`; `Bearer xxx` → `Bearer <secret>`; `?key=xxx` → `?key=<secret>`; `"api_key": "xxx"`, `password=xxx` → the name is kept, the value becomes `<secret>`.
+
+Chat text can't be masked. If "Log prompts to console" is on in SillyTavern's settings and you pick **Everything** or **What the console shows**, a warning appears because chat text may be included. **Errors & warnings** is the safest choice for sharing. Masking only catches common shapes, so skim the export before sharing.
 
 - Only what was recorded since the extension was enabled; reloading clears it. The last 2000 lines are kept.
 - If the browser blocks clipboard access, use **Save as file**.
