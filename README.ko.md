@@ -92,17 +92,144 @@ Eruda 콘솔에서는 로그를 한 줄씩만 복사할 수 있어서, 한꺼번
 
 PC 개발자도구 콘솔과 똑같이 현재 ST 페이지 안에서 실행됩니다. 그래서 PC에서 쓰던 디버깅 코드를 그대로 붙여넣으면 됩니다.
 
-예시 (이 확장 설정 확인하기):
+예시 (마지막 메시지 원본 보기):
 
 ```js
-SillyTavern.getContext().extensionSettings.st_eruda
+SillyTavern.getContext().chat.at(-1)
 ```
 
-## 6. 휴대폰에서 코드 입력할 때 팁
+## 6. 스니펫: 자주 쓰는 코드를 등록해 두고 한 번에 실행
+
+휴대폰에서 긴 코드를 매번 붙여넣기는 번거로워서 **스니펫** 탭을 두었습니다.
+
+1. Eruda를 열고 탭 줄에서 **스니펫**을 누릅니다.
+2. **+ 새 스니펫**을 눌러 이름과 코드를 넣고 **저장**합니다.
+3. 목록에서 **▶ 실행**을 누르면 실행됩니다. 결과는 **Console** 탭에 찍힙니다.
+4. **수정**으로 고치고, **삭제**는 한 번 더 눌러야(“정말 삭제?”) 지워집니다.
+
+- 콘솔에 넣는 것과 똑같이 실행되고, 맨 바깥에 `await`를 써도 됩니다.
+- 저장할 때 둥근 따옴표(`“ ” ‘ ’`)를 곧은 따옴표로 바꿔 줍니다. 휴대폰 키보드 때문에 코드가 깨지지 않게 하려는 것입니다.
+- ST 서버에 저장되므로 **PC에서 등록하면 휴대폰에서도 보입니다.** 긴 코드는 PC에서 넣어 두면 편합니다.
+
+## 7. 자주 쓰는 코드
+
+스니펫에 등록하거나 Console에 붙여넣어 쓰세요. 감시·기록 코드는 **새로고침하면 꺼집니다.**
+
+### 지금 상태 한눈에 보기
+```js
+(() => {
+  const c = SillyTavern.getContext();
+  const s = c.chatCompletionSettings;
+  console.table({
+    API: c.mainApi, 소스: s.chat_completion_source, 모델: c.getChatCompletionModel?.(),
+    프리셋: s.preset_settings_openai, 최대응답: s.openai_max_tokens, 컨텍스트: s.openai_max_context,
+    캐릭터: c.name2, 채팅: c.getCurrentChatId(), 메시지수: c.chat.length,
+  });
+})();
+```
+
+### 지금 쓰는 연결 프로필·프리셋
+```js
+(() => {
+  const c = SillyTavern.getContext();
+  const cm = c.extensionSettings.connectionManager;
+  const p = cm?.profiles?.find(x => x.id === cm.selectedProfile);
+  console.table({
+    프로필: p?.name ?? '(선택 안 됨)',
+    '프로필에 묶인 프리셋': p ? (p.preset ?? '(안 묶음)') : '-',
+    '지금 프리셋': c.chatCompletionSettings.preset_settings_openai,
+    API: c.chatCompletionSettings.chat_completion_source,
+    모델: c.getChatCompletionModel?.(),
+  });
+})();
+```
+
+### 설치된 확장 목록·버전·켜짐 여부
+```js
+(async () => {
+  const { extensionNames, getExtensionManifest, extension_settings } = await import('/scripts/extensions.js');
+  const off = extension_settings.disabledExtensions || [];
+  console.table(extensionNames.filter(n => n.startsWith('third-party')).map(n => ({
+    확장: n.replace('third-party/', ''), 버전: getExtensionManifest(n)?.version ?? '', 상태: off.includes(n) ? '꺼짐' : '켜짐',
+  })));
+})();
+```
+
+### 실패한 요청 기록 (Termux 로그를 못 볼 때)
+서버가 돌려준 에러 내용까지 콘솔에 찍습니다. 켜 두고 문제를 다시 일으킨 뒤 **내보내기** 하세요.
+```js
+(() => {
+  const original = window.fetch;
+  window.fetch = async (...args) => {
+    const response = await original(...args);
+    if (!response.ok) {
+      const body = await response.clone().text().catch(() => '');
+      console.error('[요청 실패]', response.status, String(args[0]), body.slice(0, 500));
+    }
+    return response;
+  };
+  toastr.info('실패한 요청 기록 시작');
+})();
+```
+
+### 설정 값이 언제, 누구 때문에 바뀌는지 감시
+값이 바뀌면 토스트가 뜨고, 콘솔에 **바꾼 코드의 위치**(스택)가 남습니다. 맨 아래 `watch(...)` 줄만 골라 쓰세요.
+```js
+(() => {
+  const c = SillyTavern.getContext();
+  const watch = (obj, key, label) => {
+    let v = obj[key];
+    Object.defineProperty(obj, key, {
+      configurable: true, enumerable: true,
+      get: () => v,
+      set: (n) => {
+        if (n !== v) {
+          console.warn(`[감시] ${label}:`, v, '→', n, '\n' + new Error().stack);
+          toastr.warning(`${v} → ${n}`, `${label} 바뀜`, { timeOut: 8000 });
+        }
+        v = n;
+      },
+    });
+  };
+  watch(c.chatCompletionSettings, 'preset_settings_openai', '프리셋');
+  watch(c.chatCompletionSettings, 'openai_max_tokens', '최대 응답 길이');
+  watch(c.chatCompletionSettings, 'openai_model', '모델');
+  watch(c.extensionSettings.connectionManager, 'selectedProfile', '연결 프로필(id)');
+  toastr.info('감시 시작');
+})();
+```
+
+### 이 채팅의 답변을 무슨 모델로 받았는지
+ST는 메시지마다 API와 모델만 남깁니다(프리셋·프로필 이름은 남기지 않습니다).
+```js
+console.table(SillyTavern.getContext().chat
+  .map((m, i) => ({ 번호: i, 이름: m.name, API: m.extra?.api ?? '', 모델: m.extra?.model ?? '', 시간: m.send_date }))
+  .filter(r => r.모델));
+```
+
+### 짧은 것들
+| 하고 싶은 것 | 코드 |
+|---|---|
+| 마지막 메시지 원본 | `SillyTavern.getContext().chat.at(-1)` |
+| 토큰 수 세기 | `await SillyTavern.getContext().getTokenCountAsync('세어볼 글')` |
+| 채팅 메타데이터 | `SillyTavern.getContext().chatMetadata` |
+
+이벤트 흐름은 코드 없이 볼 수 있습니다: ST 사용자 설정 → **디버그 메뉴** → *Toggle event tracing* → Execute (한 번 더 하면 꺼짐).
+
+## 8. 휴대폰에서 코드 입력할 때 팁
 
 - 휴대폰 키보드는 따옴표 `"`를 `“ ”` 같은 둥근 따옴표로 바꾸는 경우가 있습니다. 이러면 코드에 오류가 납니다.
-  키보드 설정에서 **스마트 구두점(스마트 따옴표) 끄기**를 해 두면 편합니다.
-- 긴 코드는 다른 곳(메모장, 채팅 등)에서 복사해서 붙여넣는 게 편합니다.
+  키보드 설정에서 **스마트 구두점(스마트 따옴표) 끄기**를 해 두면 편합니다. (스니펫은 저장할 때 알아서 고쳐 줍니다.)
+- 긴 코드는 PC에서 스니펫으로 등록해 두거나, 다른 곳에서 복사해서 붙여넣는 게 편합니다.
+
+## 9. 저장 위치와 삭제
+
+설정과 스니펫은 ST의 `settings.json`이 아니라 이 확장 전용 파일에 저장됩니다.
+
+- 위치: `data/<사용자>/user/files/st-eruda-settings.json`
+- 예전 버전에서 `settings.json`에 저장된 값은 처음 실행할 때 이 파일로 옮기고 `settings.json`에서는 지웁니다.
+- "콘솔을 켰는지"만은 기기마다 브라우저에도 적어 둡니다. 설정 파일을 받아 오기 전에 가장 먼저 로그를 모으기 시작하려는 것입니다.
+- **확장을 삭제하면** 이 파일과 브라우저에 적어 둔 값, 예전 `settings.json` 항목까지 모두 지웁니다.
 
 ## 출처
 

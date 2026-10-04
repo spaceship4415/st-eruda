@@ -45,7 +45,7 @@ Chat text can't be masked. If "Log prompts to console" is on in SillyTavern's se
 - Only what was recorded since the extension was enabled; reloading clears it. The last 2000 lines are kept.
 - If the browser blocks clipboard access, use **Save as file**.
 
-To keep the tab bar short enough for a phone, Sources, Info and Snippets are left out.
+To keep the tab bar short enough for a phone, Eruda's own Sources, Info and Snippets tabs are left out.
 
 ### Running JavaScript
 
@@ -57,13 +57,32 @@ To keep the tab bar short enough for a phone, Sources, Info and Snippets are lef
 Code runs in the SillyTavern page, just like the PC developer tools console. For example:
 
 ```js
-SillyTavern.getContext().extensionSettings.st_eruda
+SillyTavern.getContext().chat.at(-1)
 ```
+
+### Snippets
+
+The **Snippets** tab keeps code you run often, so you don't have to paste it on a phone every time.
+
+1. Tap **+ New snippet**, enter a name and the code, and tap **Save**.
+2. Tap **▶ Run** to run it; output goes to the **Console** tab.
+3. **Edit** changes it; **Delete** needs a second tap ("Really delete?").
+
+Snippets run like console input, and top-level `await` works. Curly quotes (`“ ” ‘ ’`) are turned into straight ones on save. They're stored on the SillyTavern server, so a snippet added on a PC is there on your phone too. See "자주 쓰는 코드" in the [Korean guide](README.ko.md#7-자주-쓰는-코드) for ready-made snippets (current state, connection profile, installed extensions, failed requests, setting watchers).
 
 ### Typing code on a phone
 
-- Phone keyboards often turn `"` into curly quotes (`“ ”`), which breaks code. Turn off **smart punctuation / smart quotes** in your keyboard settings.
-- For longer code, copy it from somewhere else and paste it.
+- Phone keyboards often turn `"` into curly quotes (`“ ”`), which breaks code. Turn off **smart punctuation / smart quotes** in your keyboard settings (snippets fix this on save).
+- For longer code, add it as a snippet on a PC, or copy it from somewhere else and paste it.
+
+## Storage and removal
+
+Settings and snippets are kept in this extension's own file, not in SillyTavern's `settings.json`:
+
+- `data/<user>/user/files/st-eruda-settings.json`
+- Values an older version left in `settings.json` are moved into this file on first run and removed from `settings.json`.
+- Whether the console is on is also noted in each device's browser, so logging can start before the settings file arrives.
+- **Deleting the extension** removes the file, that browser note, and any leftover `settings.json` entry.
 
 ## Credits
 

@@ -1,5 +1,4 @@
-import { saveSettingsDebounced } from '../../../../script.js';
-import { extension_settings } from '../../../extensions.js';
+import { deleteSettingsData, loadSettings, saveSettings, settings, wasEnabledHere } from './storage.js';
 import { getCurrentLocale } from '../../../i18n.js';
 import { power_user } from '../../../power-user.js';
 import { copyText, download } from '../../../utils.js';
@@ -21,6 +20,13 @@ const TEXT = ko
         filterNow: desc => `지금 콘솔 필터: ${desc}`, filterNone: '없음 (전체와 같음)',
         promptWarning: '⚠ ST 설정의 "콘솔에 프롬프트 기록"이 켜져 있어 채팅 내용과 캐릭터 설정이 함께 들어갈 수 있습니다. 공유하기 전에 확인하세요.',
         copied: '복사했습니다 ✓', copyFailed: '복사 실패 — 파일로 저장해 보세요', empty: '내보낼 기록이 없습니다',
+        snippetTab: '스니펫',
+        snippetIntro: '자주 쓰는 코드를 등록해 두고 한 번에 실행합니다. 결과는 Console 탭에 찍힙니다. ST 서버의 확장 전용 파일에 저장되므로 PC에서 등록하면 휴대폰에서도 보입니다.',
+        snippetEmpty: '아직 등록한 스니펫이 없습니다. 예시는 확장 리드미의 "자주 쓰는 코드"를 참고하세요.',
+        snippetNew: '+ 새 스니펫', snippetRun: '▶ 실행', snippetEdit: '수정', snippetDelete: '삭제', snippetConfirmDelete: '정말 삭제?',
+        snippetName: '이름', snippetCode: '코드', snippetSave: '저장', snippetCancel: '취소',
+        snippetNamePlaceholder: '예: 지금 상태 보기', snippetDefaultName: n => `스니펫 ${n}`,
+        snippetNeedCode: '코드를 넣어 주세요', snippetRan: '실행했습니다 ✓', snippetFailed: '에러 — Console 탭 확인',
         positions: { 'top-left': '왼쪽 위', 'top-right': '오른쪽 위', 'middle-left': '왼쪽 가운데', 'middle-right': '오른쪽 가운데', 'bottom-left': '왼쪽 아래', 'bottom-right': '오른쪽 아래' },
     }
     : {
@@ -35,6 +41,13 @@ const TEXT = ko
         filterNow: desc => `Console filter now: ${desc}`, filterNone: 'none (same as Everything)',
         promptWarning: '⚠ "Log prompts to console" is on in SillyTavern\'s settings, so chat text and character details may be included. Check before sharing.',
         copied: 'Copied ✓', copyFailed: 'Copy failed — try saving as a file', empty: 'Nothing to export',
+        snippetTab: 'Snippets',
+        snippetIntro: 'Save code you run often and run it with one tap. Output goes to the Console tab. Saved in this extension\'s own file on the SillyTavern server, so snippets added on a PC show up on your phone too.',
+        snippetEmpty: 'No snippets yet. See "Handy snippets" in the extension\'s README for examples.',
+        snippetNew: '+ New snippet', snippetRun: '▶ Run', snippetEdit: 'Edit', snippetDelete: 'Delete', snippetConfirmDelete: 'Really delete?',
+        snippetName: 'Name', snippetCode: 'Code', snippetSave: 'Save', snippetCancel: 'Cancel',
+        snippetNamePlaceholder: 'e.g. Show current state', snippetDefaultName: n => `Snippet ${n}`,
+        snippetNeedCode: 'Enter some code', snippetRan: 'Ran ✓', snippetFailed: 'Error — check the Console tab',
         positions: { 'top-left': 'Top left', 'top-right': 'Top right', 'middle-left': 'Middle left', 'middle-right': 'Middle right', 'bottom-left': 'Bottom left', 'bottom-right': 'Bottom right' },
     };
 
@@ -129,7 +142,7 @@ function describeConsoleFilter(filter) {
 const SCOPES = ['problems', 'all', 'console'];
 
 function getScope() {
-    const scope = extension_settings[MODULE_NAME].exportScope;
+    const scope = settings.exportScope;
     return SCOPES.includes(scope) ? scope : 'problems';
 }
 
@@ -310,8 +323,8 @@ function exportTool() {
                 input.dataset.label = scopeLabels[input.value];
                 input.checked = input.value === getScope();
                 input.addEventListener('change', () => {
-                    extension_settings[MODULE_NAME].exportScope = input.value;
-                    saveSettingsDebounced();
+                    settings.exportScope = input.value;
+                    saveSettings();
                     paintChoices();
                     refresh();
                 });
@@ -328,6 +341,161 @@ function exportTool() {
         },
         show() {
             refresh();
+            root.style.display = 'block';
+        },
+        hide() {
+            root.style.display = 'none';
+        },
+        destroy() {
+            root = null;
+        },
+    };
+}
+
+// 휴대폰 키보드가 바꿔 넣는 둥근 따옴표는 코드를 망가뜨려서 저장할 때 곧은 따옴표로 되돌린다
+function straightenQuotes(code) {
+    return code.replace(/[“”„‟]/g, '"').replace(/[‘’‚‛]/g, '\'');
+}
+
+// 콘솔에 직접 넣은 것처럼 전역에서 실행한다. 맨 바깥에 await 가 있으면 async 함수로 감싸서 다시 해 본다
+async function runSnippet(snippet) {
+    console.log(`[snippet] ${snippet.name}`);
+    try {
+        let result;
+        try {
+            result = (0, eval)(snippet.code);
+        } catch (error) {
+            if (!(error instanceof SyntaxError) || !/\bawait\b/.test(snippet.code)) throw error;
+            result = (0, eval)(`(async () => {\n${snippet.code}\n})()`);
+        }
+        result = await result;
+        if (result !== undefined) console.log(`[snippet] ${snippet.name} →`, result);
+        return true;
+    } catch (error) {
+        console.error(`[snippet] ${snippet.name} failed:`, error);
+        return false;
+    }
+}
+
+// Eruda 안에 '스니펫' 탭을 단다. 사용자가 코드를 등록·수정·삭제하고 한 번에 실행한다.
+// 목록 화면과 편집 화면 두 가지만 있고, 삭제는 팝업 대신 버튼을 한 번 더 누르게 한다(ST 팝업은 콘솔 창 뒤에 뜬다)
+function snippetTool() {
+    let root = null;
+    let editing = false;
+    const snippets = () => settings.snippets;
+    const buttonStyle = 'min-height:44px;padding:8px 12px;font-size:15px;border:1px solid #ccc;border-radius:8px;background:#f5f5f5;color:#333;';
+    const primaryStyle = 'min-height:44px;padding:8px 12px;font-size:15px;border:1px solid #1e88e5;border-radius:8px;background:#2196f3;color:#fff;font-weight:bold;';
+
+    const make = (tag, style, text) => {
+        const element = document.createElement(tag);
+        if (style) element.style.cssText = style;
+        if (text !== undefined) element.textContent = text;
+        return element;
+    };
+
+    const renderList = () => {
+        editing = false;
+        root.replaceChildren();
+        root.append(make('p', 'margin:0 0 12px;font-size:14px;line-height:1.5;', TEXT.snippetIntro));
+        const add = make('button', `${primaryStyle}display:block;width:100%;margin:0 0 16px;`, TEXT.snippetNew);
+        add.type = 'button';
+        add.addEventListener('click', () => renderEditor(null));
+        root.append(add);
+
+        if (!snippets().length) {
+            root.append(make('p', 'margin:0;font-size:14px;color:#666;line-height:1.5;', TEXT.snippetEmpty));
+            return;
+        }
+        for (const snippet of snippets()) {
+            const card = make('div', 'margin:0 0 12px;padding:12px;border:1px solid #ccc;border-radius:8px;');
+            card.append(make('div', 'font-size:16px;font-weight:bold;margin:0 0 4px;word-break:break-all;', snippet.name));
+            const firstLine = snippet.code.split('\n').find(line => line.trim()) ?? '';
+            card.append(make('div', 'font-family:monospace;font-size:12px;color:#666;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0 0 10px;', firstLine));
+            const row = make('div', 'display:flex;gap:8px;');
+            const run = make('button', `${primaryStyle}flex:2;`, TEXT.snippetRun);
+            const edit = make('button', `${buttonStyle}flex:1;`, TEXT.snippetEdit);
+            const remove = make('button', `${buttonStyle}flex:1;`, TEXT.snippetDelete);
+            for (const button of [run, edit, remove]) button.type = 'button';
+            run.dataset.label = TEXT.snippetRun;
+            remove.dataset.label = TEXT.snippetDelete;
+            run.addEventListener('click', async () => flash(run, await runSnippet(snippet) ? TEXT.snippetRan : TEXT.snippetFailed));
+            edit.addEventListener('click', () => renderEditor(snippet.id));
+            remove.addEventListener('click', () => {
+                if (remove.dataset.armed !== 'true') {
+                    remove.dataset.armed = 'true';
+                    remove.textContent = TEXT.snippetConfirmDelete;
+                    remove.style.background = '#e53935';
+                    remove.style.color = '#fff';
+                    clearTimeout(remove.armTimer);
+                    remove.armTimer = setTimeout(() => {
+                        remove.dataset.armed = 'false';
+                        remove.textContent = TEXT.snippetDelete;
+                        remove.style.background = '#f5f5f5';
+                        remove.style.color = '#333';
+                    }, 3000);
+                    return;
+                }
+                settings.snippets = snippets().filter(item => item.id !== snippet.id);
+                saveSettings();
+                renderList();
+            });
+            row.append(run, edit, remove);
+            card.append(row);
+            root.append(card);
+        }
+    };
+
+    const renderEditor = (id) => {
+        editing = true;
+        const snippet = snippets().find(item => item.id === id);
+        root.replaceChildren();
+        const fieldStyle = 'display:block;width:100%;box-sizing:border-box;margin:0 0 14px;padding:10px;font-size:16px;border:1px solid #ccc;border-radius:8px;color:#333;background:#fff;';
+        root.append(make('label', 'display:block;margin:0 0 4px;font-size:14px;font-weight:bold;', TEXT.snippetName));
+        const name = make('input', fieldStyle);
+        name.type = 'text';
+        name.value = snippet?.name ?? '';
+        name.placeholder = TEXT.snippetNamePlaceholder;
+        root.append(name);
+        root.append(make('label', 'display:block;margin:0 0 4px;font-size:14px;font-weight:bold;', TEXT.snippetCode));
+        const code = make('textarea', `${fieldStyle}min-height:240px;font-family:monospace;font-size:14px;line-height:1.4;resize:vertical;`);
+        code.value = snippet?.code ?? '';
+        for (const [attribute, value] of [['autocapitalize', 'off'], ['autocomplete', 'off'], ['autocorrect', 'off'], ['spellcheck', 'false']]) {
+            code.setAttribute(attribute, value);
+        }
+        root.append(code);
+        const row = make('div', 'display:flex;gap:8px;');
+        const save = make('button', `${primaryStyle}flex:2;`, TEXT.snippetSave);
+        const cancel = make('button', `${buttonStyle}flex:1;`, TEXT.snippetCancel);
+        save.type = cancel.type = 'button';
+        save.dataset.label = TEXT.snippetSave;
+        save.addEventListener('click', () => {
+            const body = straightenQuotes(code.value).trim();
+            if (!body) return flash(save, TEXT.snippetNeedCode);
+            const title = name.value.trim() || TEXT.snippetDefaultName(snippets().length + 1);
+            if (snippet) {
+                snippet.name = title;
+                snippet.code = body;
+            } else {
+                snippets().push({ id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, name: title, code: body });
+            }
+            saveSettings();
+            renderList();
+        });
+        cancel.addEventListener('click', renderList);
+        row.append(save, cancel);
+        root.append(row);
+    };
+
+    return {
+        name: TEXT.snippetTab,
+        init($el) {
+            root = $el.get(0);
+            root.style.cssText = 'padding:16px;overflow:auto;';
+            renderList();
+        },
+        show() {
+            // 다른 기기에서 고친 목록이 설정으로 들어왔을 수 있어서, 고치는 중이 아니면 다시 그린다
+            if (!editing) renderList();
             root.style.display = 'block';
         },
         hide() {
@@ -376,9 +544,10 @@ async function enable() {
     try {
         const eruda = await loadEruda();
         // 로딩 중에 꺼졌으면 띄우지 않는다
-        if (!extension_settings[MODULE_NAME].enabled || eruda._isInit) return;
+        if (!settings.enabled || eruda._isInit) return;
         // 휴대폰 폭에서 '내보내기' 탭이 옆으로 밀지 않아도 보이도록 잘 안 쓰는 탭(Sources·Info·Snippets)은 뺀다
         eruda.init({ container: createHost(), tool: ['console', 'elements', 'network', 'resources'] });
+        eruda.add(snippetTool());
         eruda.add(exportTool());
         // 콘솔 창이 열리고 닫힐 때마다 버튼 자리를 다시 잡는다.
         // 버튼을 눌러 열면 Eruda 가 창을 연 직후에 버튼을 끌던 자리로 되돌려 놓아서 한 박자 늦게 옮긴다
@@ -394,7 +563,7 @@ async function enable() {
 
 function placeButton() {
     if (!window.eruda?._isInit) return;
-    const [row, col] = (extension_settings[MODULE_NAME].position || DEFAULT_POSITION).split('-');
+    const [row, col] = (settings.position || DEFAULT_POSITION).split('-');
     const width = window.innerWidth;
     const height = window.innerHeight;
     const x = col === 'left' ? EDGE_GAP : width - BUTTON_SIZE - EDGE_GAP;
@@ -419,15 +588,21 @@ function disable() {
     document.getElementById(HOST_ID)?.remove();
 }
 
-// 다른 확장보다 먼저 읽히므로, 켜져 있으면 여기서 바로 모으기 시작해야 처음 나는 에러까지 잡힌다
-if (extension_settings[MODULE_NAME]?.enabled) startCapture();
+/**
+ * 확장을 지울 때 ST 가 부르는 훅(manifest.json 의 hooks.delete). 설정·스니펫 파일과 이 기기의 캐시를 지운다
+ */
+export async function onDelete() {
+    disable();
+    await deleteSettingsData();
+}
 
-jQuery(() => {
-    extension_settings[MODULE_NAME] ??= { enabled: false };
-    const settings = extension_settings[MODULE_NAME];
-    settings.position ??= DEFAULT_POSITION;
-    // 예전 '콘솔 필터도 적용' 체크박스 값. 지금은 '콘솔에 보이는 그대로' 선택지로 바뀌어 쓰지 않는다
-    delete settings.exportUseConsoleFilter;
+// 다른 확장보다 먼저 읽히므로, 켜져 있으면 여기서 바로 모으기 시작해야 처음 나는 에러까지 잡힌다.
+// 설정 파일은 서버에서 받아 와야 해서, 이 기기에서 지난번에 켜 두었는지(브라우저에 적어 둔 값)로 먼저 판단한다
+if (wasEnabledHere()) startCapture();
+
+jQuery(async () => {
+    await loadSettings();
+    if (settings.enabled) startCapture();
 
     const drawer = $(`
         <div id="st_eruda_container" class="extension_container">
@@ -458,14 +633,14 @@ jQuery(() => {
     }
     select.val(settings.position).on('change', function () {
         settings.position = this.value;
-        saveSettingsDebounced();
+        saveSettings();
         placeButton();
     });
     drawer.find('#st_eruda_enabled')
         .prop('checked', settings.enabled)
         .on('change', function () {
             settings.enabled = this.checked;
-            saveSettingsDebounced();
+            saveSettings();
             if (settings.enabled) {
                 startCapture();
                 enable();
