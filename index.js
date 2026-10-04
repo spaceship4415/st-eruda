@@ -92,6 +92,18 @@ function pad(number, size = 2) {
     return String(number).padStart(size, '0');
 }
 
+// 남에게 보여 줄 기록이라 ST 에 접속한 주소(IP·도메인·포트)는 가린다.
+// 'http://192.168.0.5:8000/scripts/a.js' → '<ST>/scripts/a.js', 주소만 따로 나오면 '<host>'
+function maskAddress(text) {
+    const escape = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const { origin, host, hostname } = window.location;
+    const targets = [[origin, '<ST>'], [host, '<host>'], [hostname, '<host>']];
+    for (const [value, mask] of targets) {
+        if (value) text = text.replace(new RegExp(escape(value), 'g'), mask);
+    }
+    return text;
+}
+
 function buildReport(onlyProblems) {
     const picked = onlyProblems ? logs.filter(isProblem) : logs;
     const header = [
@@ -104,7 +116,7 @@ function buildReport(onlyProblems) {
         const stamp = `${pad(time.getHours())}:${pad(time.getMinutes())}:${pad(time.getSeconds())}.${pad(time.getMilliseconds(), 3)}`;
         return `[${stamp}] [${level.toUpperCase()}] ${text}`;
     });
-    return { text: header.concat(lines).join('\n'), count: picked.length };
+    return { text: maskAddress(header.concat(lines).join('\n')), count: picked.length };
 }
 
 // 버튼 글자를 잠깐 바꿔서 알려 준다. 콘솔 창이 화면을 덮고 있어 토스트는 가려질 수 있어서

@@ -30,6 +30,8 @@ Eruda's console copies one log at a time, so this extension adds an **Export** t
 
 Each line has a timestamp, a level and the message; errors include their stack trace. The top lists the browser and screen size.
 
+The address you reach SillyTavern at (IP or domain and port) is masked: `http://192.168.0.5:8000/scripts/a.js` becomes `<ST>/scripts/a.js`, and the host on its own becomes `<host>`. Anything else printed to the log — chat text, API keys, other servers' addresses — is kept as is, so skim it before sharing.
+
 - Only what was recorded since the extension was enabled; reloading clears it. The last 2000 lines are kept.
 - If the browser blocks clipboard access, use **Save as file**.
 
