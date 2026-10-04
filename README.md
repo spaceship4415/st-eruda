@@ -23,10 +23,12 @@ Once enabled, Eruda records console output, uncaught errors and network requests
 Eruda's console copies one log at a time, so this extension adds an **Export** tab.
 
 1. Open Eruda and tap **Export** in the tab bar.
-2. Pick one:
-   - **Copy errors & warnings**: only the lines that matter. Usually enough.
-   - **Copy all**: every log line.
-   - **Save as file (.txt)**: downloads everything as `st-console-<date>-<time>.txt`. Handy when the log is too long to paste.
+2. Pick a **Range** (remembered for next time):
+   - **Errors & warnings** (default): only the lines that matter. Usually enough.
+   - **Everything**: every log line.
+3. Tap a button; both follow the range:
+   - **Copy**: copies to the clipboard.
+   - **Save as file (.txt)**: downloads `st-console-errors-<date>-<time>.txt` (errors & warnings) or `st-console-<date>-<time>.txt` (everything). Handy when the log is too long to paste.
 
 Each line has a timestamp, a level and the message; errors include their stack trace. The top lists the browser and screen size.
 

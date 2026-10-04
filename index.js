@@ -15,7 +15,7 @@ const TEXT = ko
         exportTab: '내보내기',
         exportIntro: '이 확장을 켠 뒤로 쌓인 기록입니다. 새로고침하면 지워집니다.',
         count: (problems, total) => `에러·경고 ${problems}개 / 전체 ${total}개`,
-        copyErrors: '에러·경고만 복사', copyAll: '전체 복사', saveFile: '파일로 저장 (.txt)',
+        scope: '범위', scopeProblems: '에러·경고만', scopeAll: '전체', copy: '복사', saveFile: '파일로 저장 (.txt)',
         copied: '복사했습니다 ✓', copyFailed: '복사 실패 — 파일로 저장해 보세요', empty: '아직 기록이 없습니다',
         positions: { 'top-left': '왼쪽 위', 'top-right': '오른쪽 위', 'middle-left': '왼쪽 가운데', 'middle-right': '오른쪽 가운데', 'bottom-left': '왼쪽 아래', 'bottom-right': '오른쪽 아래' },
     }
@@ -26,7 +26,7 @@ const TEXT = ko
         exportTab: 'Export',
         exportIntro: 'Everything recorded since this extension was enabled. Reloading clears it.',
         count: (problems, total) => `${problems} errors/warnings / ${total} total`,
-        copyErrors: 'Copy errors & warnings', copyAll: 'Copy all', saveFile: 'Save as file (.txt)',
+        scope: 'Range', scopeProblems: 'Errors & warnings', scopeAll: 'Everything', copy: 'Copy', saveFile: 'Save as file (.txt)',
         copied: 'Copied ✓', copyFailed: 'Copy failed — try saving as a file', empty: 'Nothing recorded yet',
         positions: { 'top-left': 'Top left', 'top-right': 'Top right', 'middle-left': 'Middle left', 'middle-right': 'Middle right', 'bottom-left': 'Bottom left', 'bottom-right': 'Bottom right' },
     };
@@ -152,18 +152,31 @@ async function copyReport(button, onlyProblems) {
     flash(button, copyWithSelection(text) ? TEXT.copied : TEXT.copyFailed);
 }
 
-function saveReport(button) {
-    const { text, count } = buildReport(false);
+function saveReport(button, onlyProblems) {
+    const { text, count } = buildReport(onlyProblems);
     if (!count) return flash(button, TEXT.empty);
     const now = new Date();
     const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-    download(text, `st-console-${stamp}.txt`, 'text/plain');
+    download(text, `st-console-${onlyProblems ? 'errors-' : ''}${stamp}.txt`, 'text/plain');
 }
 
-// Eruda 안에 '내보내기' 탭을 단다. 에러를 본 그 자리에서 바로 내보낼 수 있게
+// Eruda 안에 '내보내기' 탭을 단다. 에러를 본 그 자리에서 바로 내보낼 수 있게.
+// 범위(에러·경고만 / 전체)를 먼저 고르고 복사·저장은 그 범위를 따른다. 고른 범위는 기억해 둔다
 function exportTool() {
     let root = null;
     const buttonStyle = 'display:block;width:100%;min-height:48px;margin:0 0 10px;padding:10px 12px;font-size:16px;border:1px solid #ccc;border-radius:8px;background:#f5f5f5;color:#333;';
+    const choiceStyle = 'position:relative;flex:1;display:flex;align-items:center;justify-content:center;gap:6px;min-height:44px;padding:8px;font-size:15px;cursor:pointer;';
+    const onlyProblems = () => extension_settings[MODULE_NAME].exportScope !== 'all';
+    // 고른 쪽을 칠하고 ✓ 를 붙인다. 동그라미는 파란 바탕에서 잘 안 보여서 숨겨 두었다
+    const paintChoices = () => {
+        for (const input of root.querySelectorAll('input[name="scope"]')) {
+            const label = input.parentElement;
+            label.style.background = input.checked ? '#2196f3' : '#f5f5f5';
+            label.style.color = input.checked ? '#fff' : '#333';
+            label.style.fontWeight = input.checked ? 'bold' : 'normal';
+            input.nextElementSibling.textContent = `${input.checked ? '✓ ' : ''}${input.dataset.label}`;
+        }
+    };
     return {
         name: TEXT.exportTab,
         init($el) {
@@ -172,18 +185,33 @@ function exportTool() {
             root.innerHTML = `
                 <p data-role="intro" style="margin:0 0 6px;font-size:14px;line-height:1.5;"></p>
                 <p data-role="count" style="margin:0 0 16px;font-size:14px;font-weight:bold;"></p>
-                <button type="button" data-action="errors" style="${buttonStyle}"></button>
-                <button type="button" data-action="all" style="${buttonStyle}"></button>
+                <p data-role="scope" style="margin:0 0 6px;font-size:14px;"></p>
+                <div role="radiogroup" style="display:flex;margin:0 0 16px;border:1px solid #ccc;border-radius:8px;overflow:hidden;">
+                    <label style="${choiceStyle}border-right:1px solid #ccc;"><input type="radio" name="scope" value="problems" style="position:absolute;opacity:0;width:0;height:0;margin:0;"><span></span></label>
+                    <label style="${choiceStyle}"><input type="radio" name="scope" value="all" style="position:absolute;opacity:0;width:0;height:0;margin:0;"><span></span></label>
+                </div>
+                <button type="button" data-action="copy" style="${buttonStyle}"></button>
                 <button type="button" data-action="save" style="${buttonStyle}"></button>
             `;
             root.querySelector('[data-role="intro"]').textContent = TEXT.exportIntro;
-            const labels = { errors: TEXT.copyErrors, all: TEXT.copyAll, save: TEXT.saveFile };
+            root.querySelector('[data-role="scope"]').textContent = TEXT.scope;
+            const scopeLabels = { problems: TEXT.scopeProblems, all: TEXT.scopeAll };
+            for (const input of root.querySelectorAll('input[name="scope"]')) {
+                input.dataset.label = scopeLabels[input.value];
+                input.checked = input.value === (onlyProblems() ? 'problems' : 'all');
+                input.addEventListener('change', () => {
+                    extension_settings[MODULE_NAME].exportScope = input.value;
+                    saveSettingsDebounced();
+                    paintChoices();
+                });
+            }
+            paintChoices();
+            const labels = { copy: TEXT.copy, save: TEXT.saveFile };
             for (const button of root.querySelectorAll('button')) {
                 button.textContent = button.dataset.label = labels[button.dataset.action];
                 button.addEventListener('click', () => {
-                    const action = button.dataset.action;
-                    if (action === 'save') saveReport(button);
-                    else copyReport(button, action === 'errors');
+                    if (button.dataset.action === 'save') saveReport(button, onlyProblems());
+                    else copyReport(button, onlyProblems());
                 });
             }
         },
