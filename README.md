@@ -18,6 +18,23 @@ Once enabled, Eruda records console output, uncaught errors and network requests
 - The extension loads first so most startup logs are caught, but a few of SillyTavern's very first lines may be missing.
 - Tap **Error** at the top of the Console tab to see only errors.
 
+### Exporting errors
+
+Eruda's console copies one log at a time, so this extension adds an **Export** tab.
+
+1. Open Eruda and tap **Export** in the tab bar.
+2. Pick one:
+   - **Copy errors & warnings**: only the lines that matter. Usually enough.
+   - **Copy all**: every log line.
+   - **Save as file (.txt)**: downloads everything as `st-console-<date>-<time>.txt`. Handy when the log is too long to paste.
+
+Each line has a timestamp, a level and the message; errors include their stack trace. The top lists the browser and screen size.
+
+- Only what was recorded since the extension was enabled; reloading clears it. The last 2000 lines are kept.
+- If the browser blocks clipboard access, use **Save as file**.
+
+To keep the tab bar short enough for a phone, Sources, Info and Snippets are left out.
+
 ### Running JavaScript
 
 1. Open the **Console** tab.
