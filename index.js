@@ -22,6 +22,7 @@ const TEXT = ko
 
 const DEFAULT_POSITION = 'middle-right';
 const BUTTON_SIZE = 40;
+const HOST_ID = 'st_eruda_host';
 const EDGE_GAP = 10;
 // ST 위쪽 메뉴줄과 아래쪽 입력창을 피한다
 const TOP_GAP = 60;
@@ -47,12 +48,27 @@ function loadEruda() {
     return loading;
 }
 
+// ST 는 <html> 에 transform 을 걸어 두어서 그 안의 position: fixed 가 화면이 아니라 <html> 크기를 따른다.
+// 휴대폰 화면에서는 <html> 높이가 0 이라 Eruda 를 그냥 띄우면 콘솔 창 높이도 0 이 되어 눌러도 안 보인다.
+// 화면 크기를 직접 단위로 준 상자를 만들고, 거기에도 transform 을 걸어 Eruda 의 fixed 가 이 상자를 따르게 한다.
+// Eruda 는 넘겨받은 상자의 스타일을 all: initial 로 지워 버려서 한 겹 안쪽 상자를 넘긴다
+function createHost() {
+    document.getElementById(HOST_ID)?.remove();
+    const host = document.createElement('div');
+    host.id = HOST_ID;
+    host.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:100vh;height:100dvh;transform:translateZ(0);pointer-events:none;z-index:2147483647;';
+    const inner = document.createElement('div');
+    host.appendChild(inner);
+    document.body.appendChild(host);
+    return inner;
+}
+
 async function enable() {
     try {
         const eruda = await loadEruda();
         // 로딩 중에 꺼졌으면 띄우지 않는다
         if (!extension_settings[MODULE_NAME].enabled || eruda._isInit) return;
-        eruda.init();
+        eruda.init({ container: createHost() });
         placeButton();
     } catch (error) {
         console.error(`[${MODULE_NAME}]`, error);
@@ -74,6 +90,7 @@ function placeButton() {
 
 function disable() {
     if (window.eruda?._isInit) window.eruda.destroy();
+    document.getElementById(HOST_ID)?.remove();
 }
 
 jQuery(() => {
