@@ -26,11 +26,12 @@ Eruda's console copies one log at a time, so this extension adds an **Export** t
 2. Pick a **Range** (remembered for next time):
    - **Errors & warnings** (default): only the lines that matter. Usually enough.
    - **Everything**: every log line.
-3. Tap a button; both follow the range:
+3. With **Also apply the console filter** checked (default), the Console tab's level (All/Info/Warning/Error) and search text are applied too; search ignores case. The current console filter is shown under the checkbox, and **N lines to export** shows the result. A line must match both the range and the console filter.
+4. Tap a button; both follow the range and filter:
    - **Copy**: copies to the clipboard.
    - **Save as file (.txt)**: downloads `st-console-errors-<date>-<time>.txt` (errors & warnings) or `st-console-<date>-<time>.txt` (everything). Handy when the log is too long to paste.
 
-Each line has a timestamp, a level and the message; errors include their stack trace. The top lists the browser and screen size.
+Each line has a timestamp, a level and the message; errors include their stack trace. The top lists the browser, screen size, and the range and filter used.
 
 The address you reach SillyTavern at (IP or domain and port) is masked: `http://192.168.0.5:8000/scripts/a.js` becomes `<ST>/scripts/a.js`, and the host on its own becomes `<host>`. Anything else printed to the log — chat text, API keys, other servers' addresses — is kept as is, so skim it before sharing.
 

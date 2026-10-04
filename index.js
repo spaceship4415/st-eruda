@@ -14,9 +14,10 @@ const TEXT = ko
         failed: 'Eruda 를 불러오지 못했습니다. 인터넷 연결을 확인하세요.',
         exportTab: '내보내기',
         exportIntro: '이 확장을 켠 뒤로 쌓인 기록입니다. 새로고침하면 지워집니다.',
-        count: (problems, total) => `에러·경고 ${problems}개 / 전체 ${total}개`,
+        count: (picked, total) => `내보낼 줄 ${picked}개 / 전체 ${total}개`,
         scope: '범위', scopeProblems: '에러·경고만', scopeAll: '전체', copy: '복사', saveFile: '파일로 저장 (.txt)',
-        copied: '복사했습니다 ✓', copyFailed: '복사 실패 — 파일로 저장해 보세요', empty: '아직 기록이 없습니다',
+        useFilter: '콘솔 필터도 적용', filterNow: desc => `지금 콘솔 필터: ${desc}`, filterNone: '없음',
+        copied: '복사했습니다 ✓', copyFailed: '복사 실패 — 파일로 저장해 보세요', empty: '내보낼 기록이 없습니다',
         positions: { 'top-left': '왼쪽 위', 'top-right': '오른쪽 위', 'middle-left': '왼쪽 가운데', 'middle-right': '오른쪽 가운데', 'bottom-left': '왼쪽 아래', 'bottom-right': '오른쪽 아래' },
     }
     : {
@@ -25,9 +26,10 @@ const TEXT = ko
         failed: 'Could not load Eruda. Check your internet connection.',
         exportTab: 'Export',
         exportIntro: 'Everything recorded since this extension was enabled. Reloading clears it.',
-        count: (problems, total) => `${problems} errors/warnings / ${total} total`,
+        count: (picked, total) => `${picked} lines to export / ${total} total`,
         scope: 'Range', scopeProblems: 'Errors & warnings', scopeAll: 'Everything', copy: 'Copy', saveFile: 'Save as file (.txt)',
-        copied: 'Copied ✓', copyFailed: 'Copy failed — try saving as a file', empty: 'Nothing recorded yet',
+        useFilter: 'Also apply the console filter', filterNow: desc => `Console filter now: ${desc}`, filterNone: 'none',
+        copied: 'Copied ✓', copyFailed: 'Copy failed — try saving as a file', empty: 'Nothing to export',
         positions: { 'top-left': 'Top left', 'top-right': 'Top right', 'middle-left': 'Middle left', 'middle-right': 'Middle right', 'bottom-left': 'Bottom left', 'bottom-right': 'Bottom right' },
     };
 
@@ -88,6 +90,44 @@ function startCapture() {
 
 const isProblem = entry => entry.level === 'error' || entry.level === 'warn';
 
+// Eruda 콘솔 위쪽에서 고른 종류(All/Info/Warning/Error)와 검색어를 읽는다
+function getConsoleFilter() {
+    const options = window.eruda?._isInit ? window.eruda.get('console')?._logger?.options : null;
+    const allLevels = ['verbose', 'info', 'warning', 'error'];
+    const levels = Array.isArray(options?.level) ? options.level : [options?.level ?? allLevels].flat();
+    const text = typeof options?.filter === 'string' ? options.filter.trim() : '';
+    const pattern = options?.filter instanceof RegExp ? options.filter : null;
+    const levelLimited = allLevels.some(level => !levels.includes(level));
+    return { levels, text, pattern, active: levelLimited || !!text || !!pattern, levelLimited };
+}
+
+// Eruda 와 같은 규칙으로 거른다: debug→verbose, warn→warning, error→error, 나머지는 info. 검색어는 대소문자 무시
+function matchesConsoleFilter(entry, filter) {
+    const level = { debug: 'verbose', warn: 'warning', error: 'error' }[entry.level] ?? 'info';
+    if (!filter.levels.includes(level)) return false;
+    if (filter.pattern) return filter.pattern.test(entry.text);
+    if (filter.text) return entry.text.toLowerCase().includes(filter.text.toLowerCase());
+    return true;
+}
+
+function describeConsoleFilter(filter) {
+    if (!filter.active) return TEXT.filterNone;
+    const parts = [];
+    if (filter.levelLimited) parts.push(filter.levels.map(level => level[0].toUpperCase() + level.slice(1)).join('·'));
+    if (filter.pattern) parts.push(String(filter.pattern));
+    else if (filter.text) parts.push(`"${filter.text}"`);
+    return parts.join(' · ');
+}
+
+// 범위(에러·경고만 / 전체)와, 켜 두었으면 콘솔 필터까지 맞는 줄만 고른다
+function pickLogs() {
+    const settings = extension_settings[MODULE_NAME];
+    const filter = getConsoleFilter();
+    const useFilter = settings.exportUseConsoleFilter !== false && filter.active;
+    const picked = logs.filter(entry => (settings.exportScope === 'all' || isProblem(entry)) && (!useFilter || matchesConsoleFilter(entry, filter)));
+    return { picked, onlyProblems: settings.exportScope !== 'all', filterNote: useFilter ? describeConsoleFilter(filter) : '' };
+}
+
 function pad(number, size = 2) {
     return String(number).padStart(size, '0');
 }
@@ -104,19 +144,21 @@ function maskAddress(text) {
     return text;
 }
 
-function buildReport(onlyProblems) {
-    const picked = onlyProblems ? logs.filter(isProblem) : logs;
+function buildReport() {
+    const { picked, onlyProblems, filterNote } = pickLogs();
+    // 받는 사람이 무엇을 거른 기록인지 알 수 있게 적어 둔다
     const header = [
         `SillyTavern console export - ${new Date().toLocaleString()}`,
         `User agent: ${navigator.userAgent}`,
         `Screen: ${window.innerWidth}x${window.innerHeight}`,
+        `Range: ${onlyProblems ? 'errors & warnings' : 'everything'}${filterNote ? `, console filter: ${filterNote}` : ''}`,
         '',
     ];
     const lines = picked.map(({ time, level, text }) => {
         const stamp = `${pad(time.getHours())}:${pad(time.getMinutes())}:${pad(time.getSeconds())}.${pad(time.getMilliseconds(), 3)}`;
         return `[${stamp}] [${level.toUpperCase()}] ${text}`;
     });
-    return { text: maskAddress(header.concat(lines).join('\n')), count: picked.length };
+    return { text: maskAddress(header.concat(lines).join('\n')), count: picked.length, onlyProblems };
 }
 
 // 버튼 글자를 잠깐 바꿔서 알려 준다. 콘솔 창이 화면을 덮고 있어 토스트는 가려질 수 있어서
@@ -140,8 +182,8 @@ function copyWithSelection(text) {
     return ok;
 }
 
-async function copyReport(button, onlyProblems) {
-    const { text, count } = buildReport(onlyProblems);
+async function copyReport(button) {
+    const { text, count } = buildReport();
     if (!count) return flash(button, TEXT.empty);
     try {
         await copyText(text);
@@ -152,8 +194,8 @@ async function copyReport(button, onlyProblems) {
     flash(button, copyWithSelection(text) ? TEXT.copied : TEXT.copyFailed);
 }
 
-function saveReport(button, onlyProblems) {
-    const { text, count } = buildReport(onlyProblems);
+function saveReport(button) {
+    const { text, count, onlyProblems } = buildReport();
     if (!count) return flash(button, TEXT.empty);
     const now = new Date();
     const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
@@ -167,6 +209,11 @@ function exportTool() {
     const buttonStyle = 'display:block;width:100%;min-height:48px;margin:0 0 10px;padding:10px 12px;font-size:16px;border:1px solid #ccc;border-radius:8px;background:#f5f5f5;color:#333;';
     const choiceStyle = 'position:relative;flex:1;display:flex;align-items:center;justify-content:center;gap:6px;min-height:44px;padding:8px;font-size:15px;cursor:pointer;';
     const onlyProblems = () => extension_settings[MODULE_NAME].exportScope !== 'all';
+    // 내보낼 줄 수와 지금 콘솔 필터를 다시 적는다. 콘솔 탭에서 필터를 바꾸고 넘어올 수 있어서 탭을 열 때마다 부른다
+    const refresh = () => {
+        root.querySelector('[data-role="count"]').textContent = TEXT.count(pickLogs().picked.length, logs.length);
+        root.querySelector('[data-role="filter-now"]').textContent = TEXT.filterNow(describeConsoleFilter(getConsoleFilter()));
+    };
     // 고른 쪽을 칠하고 ✓ 를 붙인다. 동그라미는 파란 바탕에서 잘 안 보여서 숨겨 두었다
     const paintChoices = () => {
         for (const input of root.querySelectorAll('input[name="scope"]')) {
@@ -190,6 +237,11 @@ function exportTool() {
                     <label style="${choiceStyle}border-right:1px solid #ccc;"><input type="radio" name="scope" value="problems" style="position:absolute;opacity:0;width:0;height:0;margin:0;"><span></span></label>
                     <label style="${choiceStyle}"><input type="radio" name="scope" value="all" style="position:absolute;opacity:0;width:0;height:0;margin:0;"><span></span></label>
                 </div>
+                <label style="display:flex;align-items:center;gap:10px;min-height:44px;margin:0;font-size:15px;cursor:pointer;">
+                    <input type="checkbox" data-role="use-filter" style="width:22px;height:22px;margin:0;flex:none;">
+                    <span data-role="use-filter-label"></span>
+                </label>
+                <p data-role="filter-now" style="margin:0 0 16px 32px;font-size:13px;color:#666;"></p>
                 <button type="button" data-action="copy" style="${buttonStyle}"></button>
                 <button type="button" data-action="save" style="${buttonStyle}"></button>
             `;
@@ -203,20 +255,29 @@ function exportTool() {
                     extension_settings[MODULE_NAME].exportScope = input.value;
                     saveSettingsDebounced();
                     paintChoices();
+                    refresh();
                 });
             }
             paintChoices();
+            root.querySelector('[data-role="use-filter-label"]').textContent = TEXT.useFilter;
+            const useFilter = root.querySelector('[data-role="use-filter"]');
+            useFilter.checked = extension_settings[MODULE_NAME].exportUseConsoleFilter !== false;
+            useFilter.addEventListener('change', () => {
+                extension_settings[MODULE_NAME].exportUseConsoleFilter = useFilter.checked;
+                saveSettingsDebounced();
+                refresh();
+            });
             const labels = { copy: TEXT.copy, save: TEXT.saveFile };
             for (const button of root.querySelectorAll('button')) {
                 button.textContent = button.dataset.label = labels[button.dataset.action];
                 button.addEventListener('click', () => {
-                    if (button.dataset.action === 'save') saveReport(button, onlyProblems());
-                    else copyReport(button, onlyProblems());
+                    if (button.dataset.action === 'save') saveReport(button);
+                    else copyReport(button);
                 });
             }
         },
         show() {
-            root.querySelector('[data-role="count"]').textContent = TEXT.count(logs.filter(isProblem).length, logs.length);
+            refresh();
             root.style.display = 'block';
         },
         hide() {
