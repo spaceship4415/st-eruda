@@ -82,8 +82,10 @@ function startCapture() {
         };
     }
     window.addEventListener('error', (event) => {
+        // 스택이 있으면 거기에 위치가 이미 들어 있어서, 스택이 없을 때만 위치를 붙인다
+        if (event.error?.stack) return record('error', `Uncaught ${event.error.stack}`);
         const where = event.filename ? ` (${event.filename}:${event.lineno}:${event.colno})` : '';
-        record('error', `Uncaught ${event.error?.stack || event.message}${where}`);
+        record('error', `Uncaught ${event.message}${where}`);
     });
     window.addEventListener('unhandledrejection', (event) => {
         record('error', `Unhandled promise rejection: ${formatArg(event.reason)}`);
