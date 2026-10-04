@@ -13,7 +13,7 @@ const TEXT = ko
         hint: '톱니 버튼을 누르면 콘솔·요소·네트워크를 볼 수 있습니다. 켜 두면 새로고침해도 계속 뜹니다.',
         failed: 'Eruda 를 불러오지 못했습니다. 인터넷 연결을 확인하세요.',
         exportTab: '내보내기',
-        exportIntro: '이 확장을 켠 뒤로 쌓인 기록입니다. 새로고침하면 지워집니다.',
+        exportIntro: '이 확장을 켠 뒤로 쌓인 기록입니다. 새로고침하거나 콘솔을 지우면 같이 지워집니다.',
         count: (picked, total) => `내보낼 줄 ${picked}개 / 전체 ${total}개`,
         scope: '무엇을 내보낼까요?', scopeProblems: '에러·경고만', scopeAll: '전체', scopeConsole: '콘솔에 보이는 그대로',
         copy: '복사', saveFile: '파일로 저장 (.txt)',
@@ -34,7 +34,7 @@ const TEXT = ko
         hint: 'Tap the gear button to open Console, Elements and Network. Stays on across reloads while enabled.',
         failed: 'Could not load Eruda. Check your internet connection.',
         exportTab: 'Export',
-        exportIntro: 'Everything recorded since this extension was enabled. Reloading clears it.',
+        exportIntro: 'Everything recorded since this extension was enabled. Reloading or clearing the console clears it too.',
         count: (picked, total) => `${picked} lines to export / ${total} total`,
         scope: 'What to export?', scopeProblems: 'Errors & warnings', scopeAll: 'Everything', scopeConsole: 'What the console shows',
         copy: 'Copy', saveFile: 'Save as file (.txt)',
@@ -525,6 +525,17 @@ function loadEruda() {
     return loading;
 }
 
+// 콘솔을 지우면 내보내기 기록도 같이 비운다. 지우기 버튼과 console.clear() 모두 logger.clear() 를 거친다
+function followConsoleClear(eruda) {
+    const logger = eruda.get('console')?._logger;
+    if (!logger || typeof logger.clear !== 'function') return;
+    const original = logger.clear;
+    logger.clear = function (...args) {
+        logs.length = 0;
+        return original.apply(this, args);
+    };
+}
+
 // ST 는 <html> 에 transform 을 걸어 두어서 그 안의 position: fixed 가 화면이 아니라 <html> 크기를 따른다.
 // 휴대폰 화면에서는 <html> 높이가 0 이라 Eruda 를 그냥 띄우면 콘솔 창 높이도 0 이 되어 눌러도 안 보인다.
 // 화면 크기를 직접 단위로 준 상자를 만들고, 거기에도 transform 을 걸어 Eruda 의 fixed 가 이 상자를 따르게 한다.
@@ -547,6 +558,7 @@ async function enable() {
         if (!settings.enabled || eruda._isInit) return;
         // 휴대폰 폭에서 '내보내기' 탭이 옆으로 밀지 않아도 보이도록 잘 안 쓰는 탭(Sources·Info·Snippets)은 뺀다
         eruda.init({ container: createHost(), tool: ['console', 'elements', 'network', 'resources'] });
+        followConsoleClear(eruda);
         eruda.add(snippetTool());
         eruda.add(exportTool());
         // 콘솔 창이 열리고 닫힐 때마다 버튼 자리를 다시 잡는다.
