@@ -59,10 +59,16 @@ const EDGE_GAP = 10;
 const TOP_GAP = 60;
 const BOTTOM_GAP = 120;
 const MAX_LOGS = 2000;
+// 프롬프트 기록처럼 한 줄이 수백 KB 인 로그가 쌓이면 휴대폰이 버티지 못해서 한 줄 길이와 전체 글자 수도 묶어 둔다
+const MAX_ENTRY_CHARS = 20000;
+const MAX_TOTAL_CHARS = 2000000;
+// Eruda 콘솔은 기본으로 로그를 끝없이 쌓고, 찍힌 객체를 펼쳐 볼 수 있게 붙잡아 두어서 메모리가 계속 늘어난다
+const ERUDA_MAX_LOGS = '250';
 const LEVELS = ['log', 'info', 'warn', 'error', 'debug'];
 
 let loading = null;
 const logs = [];
+let totalChars = 0;
 let capturing = false;
 
 function formatArg(arg) {
@@ -77,8 +83,19 @@ function formatArg(arg) {
 }
 
 function record(level, text) {
+    if (text.length > MAX_ENTRY_CHARS) {
+        text = `${text.slice(0, MAX_ENTRY_CHARS)} … (${text.length - MAX_ENTRY_CHARS} more chars cut)`;
+    }
     logs.push({ time: new Date(), level, text });
-    if (logs.length > MAX_LOGS) logs.shift();
+    totalChars += text.length;
+    while (logs.length > MAX_LOGS || (totalChars > MAX_TOTAL_CHARS && logs.length > 1)) {
+        totalChars -= logs.shift().text.length;
+    }
+}
+
+function clearLogs() {
+    logs.length = 0;
+    totalChars = 0;
 }
 
 // Eruda 창에서는 한 줄씩만 복사할 수 있어서 내보내기용으로 따로 모아 둔다.
@@ -531,9 +548,16 @@ function followConsoleClear(eruda) {
     if (!logger || typeof logger.clear !== 'function') return;
     const original = logger.clear;
     logger.clear = function (...args) {
-        logs.length = 0;
+        clearLogs();
         return original.apply(this, args);
     };
+}
+
+// Eruda 콘솔에 남길 로그 수를 묶는다. 이 값은 Eruda 가 브라우저에 기억해 두므로, 사용자가 Settings 에서
+// 다른 숫자를 고르면 그대로 두고 기본값(infinite)일 때만 바꾼다
+function limitConsoleLogs(eruda) {
+    const config = eruda.get('console')?.config;
+    if (config?.get('maxLogNum') === 'infinite') config.set('maxLogNum', ERUDA_MAX_LOGS);
 }
 
 // ST 는 <html> 에 transform 을 걸어 두어서 그 안의 position: fixed 가 화면이 아니라 <html> 크기를 따른다.
@@ -558,6 +582,7 @@ async function enable() {
         if (!settings.enabled || eruda._isInit) return;
         // 휴대폰 폭에서 '내보내기' 탭이 옆으로 밀지 않아도 보이도록 잘 안 쓰는 탭(Sources·Info·Snippets)은 뺀다
         eruda.init({ container: createHost(), tool: ['console', 'elements', 'network', 'resources'] });
+        limitConsoleLogs(eruda);
         followConsoleClear(eruda);
         eruda.add(snippetTool());
         eruda.add(exportTool());
